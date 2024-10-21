@@ -1,0 +1,28 @@
+query RunInput {
+  cart {
+    lines {
+      id
+      quantity
+      bundleId: attribute(key: "_bundleId") {
+        value
+      }
+      container_variant: attribute(key: "_pv"){
+        value
+      }
+      merchandise {
+        __typename
+        ... on ProductVariant {
+          id
+          product {
+            id
+            parent_variant: metafield(namespace: "custom", key: "parent_variant") { 
+                  
+                  value
+              }
+             
+            }
+          }
+        }
+      }
+    }
+  }
