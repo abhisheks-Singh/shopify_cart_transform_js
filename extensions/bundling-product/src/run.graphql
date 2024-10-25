@@ -3,10 +3,10 @@ query RunInput {
     lines {
       id
       quantity
-      bundleId: attribute(key: "_bundleId") {
+      bundleId: attribute(key: "_bundle_id") {
         value
       }
-      container_variant: attribute(key: "_pv"){
+      container_variant: attribute(key: "_bundle_maker") {
         value
       }
       merchandise {
@@ -15,14 +15,12 @@ query RunInput {
           id
           product {
             id
-            parent_variant: metafield(namespace: "custom", key: "parent_variant") { 
-                  
-                  value
-              }
-             
+            bundle_raw_config : metafield(namespace: "custom", key: "bundle_raw_configuration") { 
+              value
             }
           }
         }
       }
-    }
+    }   
   }
+}
