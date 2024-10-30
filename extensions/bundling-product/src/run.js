@@ -5,111 +5,128 @@
  * @typedef {import("../generated/api").FunctionRunResult} FunctionRunResult
  */
 
-const NO_CHANGES = {
-  operations: [],
-};
+const NO_CHANGES = { operations: [] };
 
+/**
+ * @param {RunInput} input
+ * @returns {FunctionRunResult}
+ */
 export function run(input) {
-  const expectedQuantities = {
-    "gid://shopify/ProductVariant/42058134683717": 1,
-    "gid://shopify/ProductVariant/42058134356037": 10,
-    "gid://shopify/ProductVariant/42095392849989": 1,
-  };
+  if (!input.cart?.lines) return NO_CHANGES;
 
-  const groupedItems = {};
-  let additionalItems = [];
+  const bundlesInCart = {};
+  let nonBundlesInCart = {};
+  let linesByProduct = {};
+  let variantsByProduct = {};
+  const cartTransformOperations = [];
 
-  input.cart.lines.forEach((line) => {
-    const { merchandise, bundleId, container_variant } = line;
+  // Organize lines into bundles and non-bundles
+  for (const line of input.cart.lines) {
+    const isBundle = (line?.checkBundle?.value || "").toLowerCase() === 'yes' || (line?.bundleId?.value || "") !== "";
+    if (isBundle && line.merchandise.__typename === 'ProductVariant') {
+      const { id: lineId, merchandise: { id: variantId, product }, quantity } = line;
 
-    if (merchandise.__typename !== "ProductVariant") {
-      return;
-    }
-
-    const variantId = merchandise.id;
-    const quantity = line.quantity;
-
-    const groupKey =
-      bundleId?.value && container_variant?.value
-        ? `${bundleId.value}_${container_variant.value}`
-        : `newGroup_${new Date().toISOString()}`;
-
-    if (!expectedQuantities[variantId]) {
-      additionalItems.push(line);
-      return;
-    }
-
-    if (!groupedItems[groupKey]) {
-      groupedItems[groupKey] = {
-        lines: [],
-        totalQuantity: {},
-      };
-    }
-
-    groupedItems[groupKey].lines.push(line);
-
-    if (!groupedItems[groupKey].totalQuantity[variantId]) {
-      groupedItems[groupKey].totalQuantity[variantId] = 0;
-    }
-    groupedItems[groupKey].totalQuantity[variantId] += quantity;
-  });
-
-  const operations = [];
-  for (const [groupKey, group] of Object.entries(groupedItems)) {
-    const quantitiesMatch = Object.entries(expectedQuantities).every(
-      ([variantId, expectedQuantity]) => {
-        const actualQuantity = group.totalQuantity[variantId] || 0;
-        return actualQuantity === expectedQuantity;
-      }
-    );
-
-    const hasValidBundleItems =
-      Object.keys(group.totalQuantity).length ===
-      Object.keys(expectedQuantities).length;
-
-    if (quantitiesMatch && hasValidBundleItems) {
-      const linesToBundle = group.lines;
-
-      let parentVariantId = linesToBundle[0].container_variant?.value
-        ? `${linesToBundle[0].container_variant.value}`
-        : "42095392849989";
-      let discountPercentage = 10.0;
-
-      const discountConfig =
-        linesToBundle[0].merchandise.product.bundle_raw_config?.value;
-      if (discountConfig) {
-        try {
-          const config = JSON.parse(discountConfig);
-          discountPercentage =
-            parseFloat(config.discount?.percentage) || discountPercentage;
-        } catch (error) {}
+      // Handle bundles
+      if (product?.bundleRawConfiguration?.jsonValue?.products) {
+        const bundleConfig = product.bundleRawConfiguration.jsonValue;
+        bundlesInCart[lineId] = {
+          lineId,
+          variantId,
+          // title: product.title,
+          quantity,
+          price: { percentageDecrease: { value: parseFloat(bundleConfig.discount?.percentage || 0) || 0 } },
+          products: bundleConfig.products,
+        };
       }
 
-      const operation = {
-        merge: {
-          cartLines: linesToBundle.map((line) => ({
-            cartLineId: line.id,
-            quantity: line.quantity,
-          })),
-          parentVariantId: `gid://shopify/ProductVariant/${parentVariantId}`,
-          price: {
-            percentageDecrease: {
-              value: discountPercentage,
+      // Add to non-bundles
+      nonBundlesInCart[lineId] = { lineId, quantity, productId: product.id, variantId };
+    }
+  }
+
+  if (!Object.keys(bundlesInCart).length || !Object.keys(nonBundlesInCart).length) {
+    return NO_CHANGES;
+  }
+
+  function updateQuantityVariables() {
+    linesByProduct = {};
+    variantsByProduct = {};
+
+    for (const lineId in nonBundlesInCart) {
+      const { productId, variantId, quantity } = nonBundlesInCart[lineId];
+      linesByProduct[productId] = linesByProduct[productId] || {};
+      linesByProduct[productId][lineId] = quantity;
+      
+      variantsByProduct[productId] = variantsByProduct[productId] || {};
+      variantsByProduct[productId][variantId] = (variantsByProduct[productId][variantId] || 0) + quantity;
+    }
+    console.log("Lines by Product:", JSON.stringify(linesByProduct, null, 2));
+    console.log("Variants by Product:", JSON.stringify(variantsByProduct, null, 2));
+  }
+
+  updateQuantityVariables();
+
+  function createBundles() {
+    let recheck = false;
+    const bundlesSorted = Object.values(bundlesInCart).sort((a, b) => b.quantity - a.quantity);
+
+    bundlesSorted.forEach(bundleDetail => {
+      let bundleEligibleQuantity = bundleDetail.quantity;
+
+      const isBundleEligible = Object.keys(bundleDetail.products).every(productId => {
+        const requiredQty = parseInt(bundleDetail.products[productId].quantity);
+        const availableQty = Math.max(...Object.values(variantsByProduct[productId.replace('/product/', '/Product/')])) || 0;
+        
+        if (availableQty < requiredQty) return false;
+        
+        const possibleQty = Math.floor(availableQty / requiredQty);
+        if (possibleQty < bundleEligibleQuantity) bundleEligibleQuantity = possibleQty;
+
+        return true;
+      });
+
+      if (isBundleEligible && bundleEligibleQuantity > 0) {
+        const _nonBundlesInCart = JSON.parse(JSON.stringify(nonBundlesInCart));
+        const cartLines = Object.keys(bundleDetail.products).map(productId => {
+          const requiredQty = parseInt(bundleDetail.products[productId].quantity) * bundleEligibleQuantity;
+          let eligibleLineId = null;
+
+          for (const lineId in linesByProduct[productId]) {
+            if (_nonBundlesInCart[lineId].quantity >= requiredQty) {
+              eligibleLineId = lineId;
+              _nonBundlesInCart[lineId].quantity -= requiredQty;
+              break;
+            }
+          }
+
+          return eligibleLineId ? { cartLineId: eligibleLineId, quantity: requiredQty } : null;
+        }).filter(item => item);
+
+        if (cartLines.length === Object.keys(bundleDetail.products).length) {
+          cartLines.push({ cartLineId: bundleDetail.lineId, quantity: bundleEligibleQuantity });
+          cartTransformOperations.push({
+            merge: {
+              parentVariantId: bundleDetail.variantId,
+              price: bundleDetail.price,
+              title: bundleDetail.title,
+              cartLines,
+              attributes: [{ key: '_bundle_position', value: (cartTransformOperations.length + 1).toString() }],
             },
-          },
-        },
-      };
+          });
 
-      operations.push(operation);
-    }
+          nonBundlesInCart = _nonBundlesInCart;
+          bundleDetail.quantity -= bundleEligibleQuantity;
+          updateQuantityVariables();
+
+          if (bundleDetail.quantity > 0) recheck = true;
+        }
+      }
+    });
+
+    if (recheck) createBundles();
   }
 
-  if (operations.length > 0) {
-    return {
-      operations: operations,
-    };
-  }
+  createBundles();
 
-  return NO_CHANGES;
+  return cartTransformOperations.length ? { operations: cartTransformOperations } : NO_CHANGES;
 }
-

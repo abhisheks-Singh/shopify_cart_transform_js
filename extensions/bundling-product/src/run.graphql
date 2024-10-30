@@ -3,24 +3,24 @@ query RunInput {
     lines {
       id
       quantity
+      checkBundle: attribute(key: "_bundle"){
+        value
+      }
       bundleId: attribute(key: "_bundle_id") {
         value
       }
-      container_variant: attribute(key: "_bundle_maker") {
-        value
-      }
       merchandise {
-        __typename
-        ... on ProductVariant {
+        ... on ProductVariant{
+          __typename
           id
           product {
             id
-            bundle_raw_config : metafield(namespace: "custom", key: "bundle_raw_configuration") { 
-              value
+            bundleRawConfiguration: metafield(namespace: "custom", key: "bundle_raw_configuration"){
+              jsonValue
             }
           }
         }
       }
-    }   
+    }
   }
 }
