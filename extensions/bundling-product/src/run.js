@@ -41,6 +41,8 @@ export function run(input) {
 
       // Add to non-bundles
       nonBundlesInCart[lineId] = { lineId, quantity, productId: product.id, variantId };
+      // console.log("bundles in cart data ", JSON.stringify(bundlesInCart));
+      // console.log("non bundles in cart dat ", JSON.stringify(nonBundlesInCart));
     }
   }
 
@@ -60,8 +62,8 @@ export function run(input) {
       variantsByProduct[productId] = variantsByProduct[productId] || {};
       variantsByProduct[productId][variantId] = (variantsByProduct[productId][variantId] || 0) + quantity;
     }
-    console.log("Lines by Product:", JSON.stringify(linesByProduct, null, 2));
-    console.log("Variants by Product:", JSON.stringify(variantsByProduct, null, 2));
+    // console.log("Lines by Product:", JSON.stringify(linesByProduct));
+    // console.log("Variants by Product:", JSON.stringify(variantsByProduct));
   }
 
   updateQuantityVariables();
@@ -69,6 +71,7 @@ export function run(input) {
   function createBundles() {
     let recheck = false;
     const bundlesSorted = Object.values(bundlesInCart).sort((a, b) => b.quantity - a.quantity);
+    console.log('bundles sorted ', JSON.stringify(bundlesSorted));
 
     bundlesSorted.forEach(bundleDetail => {
       let bundleEligibleQuantity = bundleDetail.quantity;
@@ -81,6 +84,10 @@ export function run(input) {
         
         const possibleQty = Math.floor(availableQty / requiredQty);
         if (possibleQty < bundleEligibleQuantity) bundleEligibleQuantity = possibleQty;
+
+        console.log('required qty ', requiredQty);
+        console.log('available qty ', availableQty);
+        console.log('bundle available qty ', availableQty);
 
         return true;
       });
